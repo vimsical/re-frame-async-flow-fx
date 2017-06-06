@@ -1,6 +1,8 @@
-(ns day8.re-frame.async-flow-fx.async-flow-fx-test
-  (:require [cljs.test :refer-macros [is deftest]]
-            [day8.re-frame.async-flow-fx :as core]))
+(ns day8.re-frame.async-flow-fx-test
+  (:require
+   #?(:cljs [cljs.test :refer-macros [is deftest]]
+      :clj  [clojure.test :refer [is deftest]])
+   [day8.re-frame.async-flow-fx :as core]))
 
 (deftest test-all-events-seen?
   (is (= (core/seen-all-of? #{:a} #{:a}) true))
@@ -71,41 +73,94 @@
 
     ;; event :no should cause nothing to happen
     (is (= (handler-fn
-             {:db {:p {:seen-events #{:33}
-                       :rules-fired #{}}}}
-             [:test-id [:no]])
+            {:db {:p {:seen-events #{:33}
+                      :rules-fired #{}}}}
+            [:test-id [:no]])
            {:db {:p {:seen-events #{:33 :no}
                      :rules-fired #{}}}}))
 
     ;; new event should not cause a new dispatch because task is already started  (:id 0 is in :rules-fired)
     (is (= (handler-fn
-             {:db {:p {:seen-events #{:1}
-                       :rules-fired #{0}}}}
-             [:test-id [:1]])
+            {:db {:p {:seen-events #{:1}
+                      :rules-fired #{0}}}}
+            [:test-id [:1]])
            {:db {:p {:seen-events #{:1} :rules-fired #{0}}}}))
 
     ;; new event should cause a dispatch
     (is (= (handler-fn
-             {:db {:p {:seen-events #{}
-                       :rules-fired #{}}}}
-             [:test-id [:1]])
+            {:db {:p {:seen-events #{}
+                      :rules-fired #{}}}}
+            [:test-id [:1]])
            {:db {:p {:seen-events #{:1} :rules-fired #{0}}}
             :dispatch-n (list [:2])}))
 
     ;; new event should cause a dispatch
     (is (= (handler-fn
-             {:db {:p {:seen-events #{:1}
-                       :rules-fired #{0}}}}
-             [:test-id [:3]])
+            {:db {:p {:seen-events #{:1}
+                      :rules-fired #{0}}}}
+            [:test-id [:3]])
            {:db {:p {:seen-events #{:1 :3} :rules-fired #{0 1}}}
             :dispatch-n (list [:test-id :halt-flow])}))
 
     ;; make sure :seen-any-of? works
     (is (= (handler-fn
-             {:db {:p {:seen-events #{}
-                       :rules-fired #{}}}}
-             [:test-id [:4]])
+            {:db {:p {:seen-events #{}
+                      :rules-fired #{}}}}
+            [:test-id [:4]])
            {:db {:p {:seen-events #{:4} :rules-fired #{2}}}
+            :dispatch-n (list [:6])}))))
+
+
+(deftest test-forwarding-event-id->seen-fn
+  (let [flow {:event-id->seen-fn
+              {:1 identity
+               :3 (fn [[event-id _ignore-me_ val]] [event-id val])
+               :4 identity}
+              :first-dispatch [:start]
+              :id             :test-id
+              :db-path        [:p]
+              :rules [{:id 0 :when :seen? :events [[:1 1]] :dispatch [:2]}
+                      {:id 1 :when :seen? :events [[:3 3]] :halt? true}
+                      {:id 2 :when :seen-any-of? :events [[:4 4] :5] :dispatch [:6]}]}
+        handler-fn  (core/make-flow-event-handler flow)]
+
+    ;; event :no should cause nothing to happen
+    (is (= (handler-fn
+            {:db {:p {:seen-events #{:33}
+                      :rules-fired #{}}}}
+            [:test-id [:no]])
+           {:db {:p {:seen-events #{:33 :no}
+                     :rules-fired #{}}}}))
+
+    ;; new event should not cause a new dispatch because task is already started  (:id 0 is in :rules-fired)
+    (is (= (handler-fn
+            {:db {:p {:seen-events #{[:1 1]}
+                      :rules-fired #{0}}}}
+            [:test-id [:1 1]])
+           {:db {:p {:seen-events #{[:1 1]} :rules-fired #{0}}}}))
+
+    ;; new event should cause a dispatch
+    (is (= (handler-fn
+            {:db {:p {:seen-events #{}
+                      :rules-fired #{}}}}
+            [:test-id [:1 1]])
+           {:db {:p {:seen-events #{[:1 1]} :rules-fired #{0}}}
+            :dispatch-n (list [:2])}))
+
+    ;; new event should cause a dispatch
+    (is (= (handler-fn
+            {:db {:p {:seen-events #{[:1 1]}
+                      :rules-fired #{0}}}}
+            [:test-id [:3 :ignore-me 3]])
+           {:db {:p {:seen-events #{[:1 1] [:3 3]} :rules-fired #{0 1}}}
+            :dispatch-n (list [:test-id :halt-flow])}))
+
+    ;; make sure :seen-any-of? works
+    (is (= (handler-fn
+            {:db {:p {:seen-events #{}
+                      :rules-fired #{}}}}
+            [:test-id [:4 4]])
+           {:db {:p {:seen-events #{[:4 4]} :rules-fired #{2}}}
             :dispatch-n (list [:6])}))))
 
 

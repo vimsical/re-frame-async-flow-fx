@@ -60,7 +60,7 @@
 
 (defn make-flow-event-handler
   "Given a flow definitiion, returns an event handler which implements this definition"
-  [{:keys [id db-path rules first-dispatch]}]
+  [{:keys [id db-path rules first-dispatch event-id->seen-fn]}]
   (let [
         ;; Subject to db-path, state is either stored in app-db or in a local atom
         ;; Two pieces of state are maintained:
@@ -87,47 +87,52 @@
     ;;   (dispatch [:id [:forwarded :event :vector]])
     ;;
     ;; This event handler returns a map of effects - it expects to be registered using
-		;; reg-event-fx
+    ;; reg-event-fx
     ;;
     (fn async-flow-event-hander
       [{:keys [db]} event-v]
+      (letfn [(->event-id [x] (cond (keyword? x) x (vector? x) (first x)))]
 
-      (condp = (second event-v)
-        ;; Setup this flow coordinator:
-        ;;   1. Establish initial state - :seen-events and ::rules-fired are made empty sets
-        ;;   2. dispatch the first event, to kick start flow
-        ;;   3. arrange for the events to be forwarded to this handler
-        :setup {:db             (set-state db #{} #{})
-                :dispatch       first-dispatch
-                :forward-events {:register    id
-                                 :events      (apply set/union (map :events rules))
-                                 :dispatch-to [id]}}
+        (condp = (second event-v)
+          ;; Setup this flow coordinator:
+          ;;   1. Establish initial state - :seen-events and ::rules-fired are made empty sets
+          ;;   2. dispatch the first event, to kick start flow
+          ;;   3. arrange for the events to be forwarded to this handler
+          :setup {:db             (set-state db #{} #{})
+                  :dispatch       first-dispatch
+                  :forward-events {:register    id
+                                   :events      (set (map ->event-id (mapcat :events rules)))
+                                   :dispatch-to [id]}}
 
-        ;; Teardown this flow coordinator:
-        ;;   1. remove this event handler
-        ;;   2. remove any state stored in app-db
-        ;;   3. deregister the events forwarder
-        :halt-flow {;; :db (dissoc db db-path)  ;; Aggh. I need dissoc-in to make this work.
-                    :forward-events           {:unregister id}
-                    :deregister-event-handler id}
+          ;; Teardown this flow coordinator:
+          ;;   1. remove this event handler
+          ;;   2. remove any state stored in app-db
+          ;;   3. deregister the events forwarder
+          :halt-flow { ;; :db (dissoc db db-path)  ;; Aggh. I need dissoc-in to make this work.
+                      :forward-events           {:unregister id}
+                      :deregister-event-handler id}
 
-        ;; Here we are managing the flow.
-        ;; A new event has been forwarded, so work out what should happen:
-        ;;  1. does this new event mean we should dispatch another?
-        ;;  2. remember this event has happened
-        (let [[_ [forwarded-event-id & args]] event-v
-              {:keys [seen-events rules-fired]} (get-state db)
-              new-seen-events (conj seen-events forwarded-event-id)
-              ready-rules     (startable-rules rules new-seen-events rules-fired)
-							add-halt?       (some :halt? ready-rules)
-              ready-rules-ids (->> ready-rules (map :id) set)
-              new-rules-fired (set/union rules-fired ready-rules-ids)
-              new-dispatches  (cond-> (mapcat :dispatch-n ready-rules)
-                                add-halt? vec
-                                add-halt? (conj [id :halt-flow]))]
-          (merge
-           {:db (set-state db new-seen-events new-rules-fired)}
-           (when (seq new-dispatches) {:dispatch-n new-dispatches})))))))
+          ;; Here we are managing the flow.
+          ;; A new event has been forwarded, so work out what should happen:
+          ;;  1. get the event's seen value using the user-provided fn, or default to `first`
+          ;;  2. does this new event mean we should dispatch another?
+          ;;  3. remember this event has happened
+          (let [[_ [event-id :as event]]          event-v
+                seen-fn                           (get event-id->seen-fn event-id first)
+
+                forwarded-event                   (seen-fn event)
+                {:keys [seen-events rules-fired]} (get-state db)
+                new-seen-events                   (conj seen-events forwarded-event)
+                ready-rules                       (startable-rules rules new-seen-events rules-fired)
+                add-halt?                         (some :halt? ready-rules)
+                ready-rules-ids                   (->> ready-rules (map :id) set)
+                new-rules-fired                   (set/union rules-fired ready-rules-ids)
+                new-dispatches                    (cond-> (mapcat :dispatch-n ready-rules)
+                                                    add-halt? vec
+                                                    add-halt? (conj [id :halt-flow]))]
+            (merge
+             {:db (set-state db new-seen-events new-rules-fired)}
+             (when (seq new-dispatches) {:dispatch-n new-dispatches}))))))))
 
 
 (defn- ensure-has-id
