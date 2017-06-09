@@ -2,10 +2,12 @@
   :description  "A re-frame effects handler for coordinating the kind of async control flow which often happens on app startup."
   :url          "https://github.com/Day8/re-frame-async-flow-fx.git"
   :license      {:name "MIT"}
-  :dependencies [[org.clojure/clojure        "1.8.0"]
-                 [org.clojure/clojurescript  "1.9.89"]
-                 [re-frame                   "0.8.0"]
-                 [day8.re-frame/forward-events-fx "0.0.6-SNAPSHOT"]]
+  :dependencies [[org.clojure/clojure                            "1.8.0"]
+                 [org.clojure/clojurescript                      "1.9.89"]
+                 [re-frame                                       "0.8.0"]
+                 [com.github.vimsical/re-frame-forward-events-fx "-SNAPSHOT"]]
+
+  :repositories [["jitpack" "https://jitpack.io"]]
 
   :profiles {:debug {:debug true}
              :dev   {:dependencies [[karma-reporter     "1.0.1"]
